@@ -1,0 +1,8 @@
+open
+172.16.9.20
+kaweewat
+Spe@ker9
+lcd C:\IT_ONLY
+prompt
+mput people.xlsx  phone.xlsx
+quit

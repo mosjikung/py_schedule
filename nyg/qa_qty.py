@@ -1,0 +1,139 @@
+import subprocess
+import os
+import io
+import cx_Oracle
+import numpy as np
+import pandas as pd
+from pandas.io.json import json_normalize
+
+
+oracle_client = r"C:\instantclient_19_5"
+os.environ["ORACLE_HOME"] = oracle_client
+os.environ["PATH"] = oracle_client+os.pathsep+os.environ["PATH"]
+os.environ["NLS_LANG"] = "AMERICAN_AMERICA.TH8TISASCII"
+
+my_dsn = cx_Oracle.makedsn("172.16.6.83", port=1521, sid="NYTG")
+
+def step01():
+    conn = cx_Oracle.connect(user="nygm", password="nygm",
+                             dsn=my_dsn, encoding="UTF-8", nencoding="UTF-8")
+
+    cursor = conn.cursor()
+    
+    cursor.execute("""DELETE FROM PO_QA_TMP_QTY""")
+    conn.commit()
+    
+    
+    cursor.execute("""INSERT INTO PO_QA_TMP_QTY
+SELECT  NVL(C_BATCH.BATCH_NO, '999999') BATCH_NO
+, NVL(C_BATCH.PO_NO, '999999') PO_NO
+, NVL(C_BATCH.MOVE_ORDER, '999999') MOVE_ORDER
+, C_BATCH.ITEM_CODE
+, C_BATCH.ITEM_COLOR
+,  C_BATCH.GRADE_CODE
+,SUM(C_BATCH.KGS_QTY) KGS_QTY, SUM(C_BATCH.YDS_QTY) YDS_QTY, COUNT(*) FOLD_QTY
+ FROM RAPPS.NYG_FABRIC_QA_GRADE_V@R12INTERFACE.WORLD C_BATCH
+ WHERE 1 = 1
+ GROUP BY  NVL(C_BATCH.BATCH_NO, '999999')
+ , NVL(C_BATCH.PO_NO, '999999') 
+, NVL(C_BATCH.MOVE_ORDER, '999999') 
+, C_BATCH.ITEM_CODE
+, C_BATCH.ITEM_COLOR
+,  C_BATCH.GRADE_CODE """)
+    
+    conn.commit()
+    
+    
+    cursor.execute("""DELETE FROM PO_QA_TMP""")
+    conn.commit()
+    
+    
+    cursor.execute("""insert into PO_QA_TMP
+ SELECT DISTINCT R12.ORGANIZATION_ID,
+    R12.OU,
+    R12.PO_NO,
+    SUBSTR(RTRIM(LTRIM(NVL(R12.po_no, ''), ' '), ' '), 5) PO_NO_SUP,
+    SUBSTR(RTRIM(LTRIM(NVL(R12.po_no, ''), ' '), ' '), 3, 2) PO_YEAR_SUP,
+    R12.SO_NO,
+    R12.CUSTOMER_NAME,
+    R12.BATCH_NO,
+    R12.ITEM_CODE,
+    R12.PRIMARY_UOM_CODE,
+    R12.TRANSACTION_UOM,
+    R12.GRADE_CODE,
+    R12.GRADE_REMARK,
+    R12.GROUP_SHADE,
+    SUBSTR(R12.ITEM_CODE, 1, 6) GROUP_CODE_SUP,
+    SUBSTR(R12.ITEM_CODE, 7) ITEM_CODE_SUP,
+    R12.ITEM_COLOR,
+    R12.ATTRIBUTE11 STATUS_CONFIRM,
+    R12.MOVE_ORDER,
+    R12.DATA_TYPE,
+    CASE
+    when R12.PRIMARY_UOM_CODE = 'PCS' then NVL(R12.TRANSACTION_QTY, 0)
+    ELSE 0
+    END PCS_QTY,
+    (SELECT SUM(C_BATCH.KGS_QTY)
+    FROM PO_QA_TMP_QTY C_BATCH
+    WHERE NVL(C_BATCH.BATCH_NO, '999999') = NVL(R12.BATCH_NO, '999999')
+    AND NVL(C_BATCH.PO_NO, '999999')      = NVL(decode('PO', R12.DATA_TYPE, R12.PO_NO, NULL), '999999')
+    AND NVL(C_BATCH.MOVE_ORDER, '999999') = NVL(decode('PR', R12.DATA_TYPE, R12.MOVE_ORDER, NULL), '999999')
+    AND C_BATCH.ITEM_CODE  = R12.ITEM_CODE
+    AND C_BATCH.ITEM_COLOR = R12.ITEM_COLOR
+    AND C_BATCH.GRADE_CODE = R12.GRADE_CODE
+    ) KGS_QTY,
+    (SELECT SUM(C_BATCH.YDS_QTY)
+    FROM PO_QA_TMP_QTY C_BATCH
+    WHERE NVL(C_BATCH.BATCH_NO, '999999') = NVL(R12.BATCH_NO, '999999')
+    AND NVL(C_BATCH.PO_NO, '999999')      = NVL(decode('PO', R12.DATA_TYPE, R12.PO_NO, NULL), '999999')
+    AND NVL(C_BATCH.MOVE_ORDER, '999999') = NVL(decode('PR', R12.DATA_TYPE, R12.MOVE_ORDER, NULL), '999999')
+    AND C_BATCH.ITEM_CODE  = R12.ITEM_CODE
+    AND C_BATCH.ITEM_COLOR = R12.ITEM_COLOR
+    AND C_BATCH.GRADE_CODE = R12.GRADE_CODE
+    ) YDS_QTY,
+    (SELECT COUNT(*)
+    FROM PO_QA_TMP_QTY C_BATCH
+    WHERE NVL(C_BATCH.BATCH_NO, '999999') = NVL(R12.BATCH_NO, '999999')
+    AND NVL(C_BATCH.PO_NO, '999999')      = NVL(decode('PO', R12.DATA_TYPE, R12.PO_NO, NULL), '999999')
+    AND NVL(C_BATCH.MOVE_ORDER, '999999') = NVL(decode('PR', R12.DATA_TYPE, R12.MOVE_ORDER, NULL), '999999')
+    AND C_BATCH.ITEM_CODE  = R12.ITEM_CODE
+    AND C_BATCH.ITEM_COLOR = R12.ITEM_COLOR
+    AND C_BATCH.GRADE_CODE = R12.GRADE_CODE
+    ) FOLD_QTY
+  FROM RAPPS.NYG_FABRIC_QA_GRADE_V@R12INTERFACE.WORLD R12
+  where SUBSTR(RTRIM(LTRIM(NVL(R12.po_no, ''), ' '), ' '), 3, 2) >= '19'
+  GROUP BY R12.ORGANIZATION_ID,
+    R12.OU,
+    R12.PO_NO,
+    SUBSTR(R12.po_no, 5) ,
+    SUBSTR(R12.po_no, 3, 2) ,
+    R12.SO_NO,
+    R12.CUSTOMER_NAME,
+    R12.BATCH_NO,
+    R12.ITEM_CODE,
+    R12.LOT_NUMBER,
+    R12.PRIMARY_UOM_CODE,
+    R12.TRANSACTION_UOM,
+    R12.GRADE_CODE,
+    R12.GRADE_REMARK,
+    R12.GROUP_SHADE,
+    SUBSTR(R12.ITEM_CODE, 1, 6) ,
+    SUBSTR(R12.ITEM_CODE, 7),
+    R12.ITEM_COLOR,
+    R12.ATTRIBUTE11,
+    R12.MOVE_ORDER,
+    R12.DATA_TYPE,
+    NVL(R12.TRANSACTION_QTY, 0) """)
+
+    conn.commit()
+    
+    
+    
+    
+    
+    conn.close()
+  
+  
+  
+  
+step01()
